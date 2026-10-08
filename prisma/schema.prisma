@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// --- Enums ---
+
+enum GlobalRole {
+  MASTER_ADMIN
+  USER
+}
+
+enum TeamRole {
+  TEAM_ADMIN
+  VOLUNTEER
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  TODO
+  ASSIGNED
+  IN_PROGRESS
+  IN_REVIEW
+  COMPLETED
+  REJECTED
+  LATE
+}
+
+// --- Models ---
+
+model User {
+  id                    String       @id @default(cuid())
+  email                 String       @unique
+  name                  String?
+  passwordHash          String?      @map("password_hash")
+  avatarUrl             String?      @map("avatar_url") // Changed from LongText
+  globalRole            GlobalRole   @default(USER) @map("global_role")
+  telegramChatId        String?      @unique @map("telegram_chat_id")
+  
+  // Gamification & Stats
+  totalVerifiedHours    Float        @default(0.0) @map("total_verified_hours")
+  xp                    Int          @default(0)
+  currentStreak         Int          @default(0) @map("current_streak")
+  
+  // Relations
+  teamMemberships       TeamMember[]
+  createdTasks          Task[]       @relation("TaskCreator")
+  assignedTasks         Task[]       @relation("TaskAssignee")
+  submissions           Submission[]
+
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Team {
+  id                    String       @id @default(cuid())
+  name                  String
+  slug                  String       @unique
+  description           String?      @db.Text
+  logoUrl               String?      @map("logo_url") // Changed from LongText
+  brandColor            String       @default("#1E293B") @map("brand_color")
+  isVerified            Boolean      @default(false) @map("is_verified")
+  teamType              String       @default("VOLUNTEER") @map("team_type")
+
+  // Relations
+  members               TeamMember[]
+  tasks                 Task[]
+
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id                    String       @id @default(cuid())
+  teamId                String       @map("team_id")
+  userId                String       @map("user_id")
+  role                  TeamRole     @default(VOLUNTEER)
+  customTitle           String?      @map("custom_title")
+  
+  team                  Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  joinedAt              DateTime     @default(now()) @map("joined_at")
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@index([teamId])
+  @@map("team_members")
+}
+
+model Task {
+  id                    String       @id @default(cuid())
+  teamId                String       @map("team_id")
+  title                 String
+  description           String       @db.Text
+  assignedHours         Float        @map("assigned_hours")
+  dueDate               DateTime?    @map("due_date")
+  
+  priority              TaskPriority @default(MEDIUM)
+  status                TaskStatus   @default(TODO)
+
+  // Location & Requirements
+  location              String?
+  requirements          String[]     @default([]) // PostgreSQL array support
+
+  // Ownership
+  createdById           String       @map("created_by_id")
+  assignedToId          String?      @map("assigned_to_id")
+
+  // Relations
+  team                  Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  creator               User         @relation("TaskCreator", fields: [createdById], references: [id])
+  assignee              User?        @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  submissions           Submission[]
+  comments              Comment[]
+
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+
+  // Crucial indexes for fast Inbox filtering
+  @@index([assignedToId, status])
+  @@index([teamId, status])
+  @@map("tasks")
+}
+
+model Submission {
+  id                    String       @id @default(cuid())
+  taskId                String       @map("task_id")
+  volunteerId           String       @map("volunteer_id")
+  
+  submittedHours        Float        @map("submitted_hours")
+  approvedHours         Float?       @map("approved_hours")
+  notes                 String?      @db.Text
+  attachmentUrls        String[]     @default([]) @map("attachment_urls") // PostgreSQL array
+
+  status                String       @default("PENDING") // PENDING, APPROVED, REJECTED
+
+  task                  Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  volunteer             User         @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+
+  submittedAt           DateTime     @default(now()) @map("submitted_at")
+  reviewedAt            DateTime?    @map("reviewed_at")
+
+  @@index([taskId])
+  @@index([volunteerId, status])
+  @@map("submissions")
+}
+
+model Comment {
+  id                    String       @id @default(cuid())
+  taskId                String       @map("task_id")
+  authorId              String       @map("author_id")
+  content               String       @db.Text
+  isSystem              Boolean      @default(false) @map("is_system")
+
+  task                  Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  createdAt             DateTime     @default(now()) @map("created_at")
+
+  @@index([taskId])
+  @@map("comments")
+}
